@@ -1,0 +1,12 @@
+创建socket对象:
+  sock=socket.socket(familiy,type,protocol)其中
+其中:
+  family      地址族,默认是SOCK.ANINET,使用默认值即可
+  protocol    使用的协议,默认是0,由系统自己选择
+  type        指明socket类型,共有三种:
+              SOCK_STREAM            TCP类型,保证数据的顺序和可靠性(默认值)
+              SOCK_DGRAM             UDP类型,与TCP功能相反
+              SOCK_RAW               原始类型,允许对底层协议直接访问(基本不会用到)
+初始化TCPsocket:
+  sock=socket.socket() # 相当于sock=socket.socket(SOCK.ANINET,SOCK_STREAM)
+下面介绍工具Nmap:
