@@ -1,12 +1,129 @@
 创建socket对象:
   sock=socket.socket(familiy,type,protocol)其中
 其中:
-  family      地址族,默认是SOCK.ANINET,使用默认值即可
-  protocol    使用的协议,默认是0,由系统自己选择
-  type        指明socket类型,共有三种:
-              SOCK_STREAM            TCP类型,保证数据的顺序和可靠性(默认值)
-              SOCK_DGRAM             UDP类型,与TCP功能相反
-              SOCK_RAW               原始类型,允许对底层协议直接访问(基本不会用到)
+    family      地址族,默认是SOCK.ANINET,使用默认值即可
+    protocol    使用的协议,默认是0,由系统自己选择
+    type        指明socket类型,共有三种:
+    SOCK_STREAM            TCP类型,保证数据的顺序和可靠性(默认值)
+    SOCK_DGRAM             UDP类型,与TCP功能相反
+    SOCK_RAW               原始类型,允许对底层协议直接访问(基本不会用到)
 初始化TCPsocket:
   sock=socket.socket() # 相当于sock=socket.socket(SOCK.ANINET,SOCK_STREAM)
+
 下面介绍工具Nmap:
+核心模块:
+  PortScanner           实现Nmap工具功能的封装
+  PortScannerAsync      同上,还可以支持异步扫描
+
+PortScanner内置函数:
+  scan(self,hosts='1270.0.1',port=None,arguments='-sV',sudo=False)
+其中我们只需设置hosts,port,arguments即可
+  hosts:    可以是ip或者域名
+  port:     "80"/"80,443,8080"/"10-1000"
+  arguments:  -sP           进行ping主机在线扫描
+              -PR           进行ARP主机在线扫描
+              -sS           进行TCP半开扫描
+              -sT           进行TCP全开扫描
+              -O            扫描主机运行的操作系统
+              -sV           扫描主机使用的网络软件版本
+              -PU           UDP主机扫描
+  all_host()                返回被扫描的所有主机列表
+  command_line()            返回当前扫描所使用的命令行
+  csv()                     返回被扫描的主机的CSV文件
+  scaninfo()                列出扫描信息的结构
+
+PortScannerAsync内置函数:
+  scan(self,hosts='1270.0.1',port=None,arguments='-sV',callback=None,sudo=False)
+  用法同PortScanner,增加了回调函数  callback(host,scan_data)
+  still_scanning()
+    判断是否在扫描
+  wait(self,timeout=None)
+    等待时间
+  stop()
+    终止当前的扫描
+
+Scapy:
+  scapy本身就是可运行的工具,在kali中输入scapy可以启动
+1:实例化
+  ip=IP()             创建IP类型的数据包
+    ip=IP(src='127.0.0.1',dst='192.1.1.1') 或者ip=IP(dst='192.0.0.0/24')
+2:scapy构造数据包采用分层的模式:最底层为Ether,其次是IP,然后是TCP或者UDP:
+    其中使用'/'来表示分层
+    按照由低到高的顺序从左向右排列
+3:ls() 查看类的属性:
+  ls(Ether)        查看Ether的属性
+
+  Ether()                         创建广播数据包,可以设置接收方和发送方的MAC地址
+  Ether(dst='ff:ff:ff:ff:ff:ff')  产生一个广播数据包
+  Ether(/IP()/TCP()               构建TCP数据包
+  IP()/TCP()/'GET/HTTP/1.0\r\n\r\n'构建http数据包
+4:还可以对类的属性进行更该:
+  IP(src='127.0.0.1',dst='192.0.0.1',ttl=32)
+    设置ttl的值是32
+5:scapy中的函数
+  5.1:发送数据包函数
+    send()                     工作在第三层 发送IP数据包
+    sendp()                    工作在第二次 发送Ether数据包
+  它们是只发不收,例如发送ICMP数据包(kali中要以root运行scapy):
+    send(IP(dst='192.0.0.1')/ICMP())
+    发送MAC地址为'ff:ff:ff:ff:ff:ff'的数据包:
+      sendp(Ether(dst='ff:ff:ff:ff:ff:ff'))
+    发送随机填充的数据包并保证正确性:
+    IP(dst='192.0.0.1')/fuzz(TCP())
+  5.2:发送和接收数据包函数
+    sr()                       用于第三层及以上
+      sr(IP(dst='192.0.0.1')/ICMP())
+    sr()返回的是两个列表:
+          第一个列表:收到应答的包和对应的应答
+          第二个列表:未收到应答的包
+      ans,unans = se(IP(dst='192.0.0.1')/ICMP())
+      ans.summary() 查看数据包的内容
+    sr1()                      和sr()基本相同,只返回第一个列表
+    例如:使用sr1()测试目标端口是否开放
+      sr1(IP(dst='192.0.0.1')/TCP(dport=80,flags='S'))
+
+    sniff()                    捕获经过本机网卡的数据包,捕获的数据包不会即时显示出来
+    它的强大之处在于可以使用filter过滤数据包:
+      只捕获与192.0.0.1有关的数据包:
+        sniff(filter='host 192.0.0.1')
+      可以过滤协议:
+        sniff(filter='icmp')
+      还可以结合起来:
+        sniff(filter='host 192.0.0.1 and icmp')
+    sniff()的另外两个参数是iface和count
+    iface:                     指定要监听的网卡
+      sniff(iface='eth0')
+    count:                      指定监听数据包的数量
+      sniff(count=3)
+
+    nsummary()                  查看捕获的数据包 和summary()相同,前者操作对象是多个数据包
+
+    
+下面介绍scapy的应用:
+  1:实现ACK端口扫描 扫描端口是否被屏蔽
+    ans,unans=sr(IP(dst='192.0.0.1')/TCP(dport=[21,23,80,443],flags='A'))
+    for s,r in ans:
+      if s[TCP].dport==r[TCP].dport:
+          print(str(s[TCP].dport+'is filtered')
+  补充:
+    如果一个端口处于被屏蔽状态，那么它将不会产生任何响应报文；
+    如果一个端口是开放状态，那么它在收到syn数据包之后会回应一个ack数据包；
+    反之，如果一个端口是关闭状态，那么它在收到syn数据包之后会回应一个rst数据包。
+  2:开放端口扫描器
+  python:
+  from scapy.all import fuzz,TCP,IP,sr
+  ans,unans=sr(IP(dst="192.168.209.128")/fuzz(TCP(dport=80,flags="S")))
+  # flags=”S” 设置TCP标志为SYN（同步标志，用于发起连接）
+  # fuzz():随机填充TCP数据包的负载（如随机数据），模拟畸形包
+  # ans:包含发送包和对应响应包的元组（(sent_packet, received_packet)）
+  # 下面的s,r出于此处
+  for s,r in ans:
+	  if r[TCP].flags==0x12:
+	  # 0x12十六进制 十进制是18 
+	  # 作用: 判断响应包的TCP标志是否为SYN-ACK。(SYN-ACK的二进制值为0x12（即十进制18），表示目标端口开放。)
+			print("This port is open")
+  
+  
+  
+
+
