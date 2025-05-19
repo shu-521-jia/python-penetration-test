@@ -1,1 +1,96 @@
+1.Nmap库主动扫描:
+  nmap后添加一些参数可直接开启扫描
+  kali可直接使用nmap
+  例如:
+  选择扫描目标:
+      nmap 192.0.0.1(www.nmap.com)/(192.0.0.1-20)/(192.0.0.0/24)
+  对目标进行端口扫描:
+      nmap -p 22 192.0.0.1                扫描指定端口
+      nmap -p 1-80 192.0.0.1              扫描指定范围端口
+      nmap -F 192.0.0.1                   扫描100个常用端口
+  对目标端口使用技术扫描:
+      nmap -sT 192.0.0.1                   TCP全开扫描
+      nmap -sS 192.0.0.1                   TCP半开扫描
+      nmap -sU 192.0.0.1 -p 123,161 192.0.0.1 UDP扫描
+  对目标操作系统和运行服务扫描:
+      nmap -O 192.0.0.1                   扫描主机的操作系统
+      nmap -sV 192.0.0.1                  扫描主机运行的服务类型
 
+2.主机状态扫描(每个都会使用scapy和nmap实现一次):
+  2.1:基于ARP的活跃主机发现技术
+    ARP-sproof:address resulation protocol
+    ARP主要用于以太网中,而以太网通信时使用的是硬件地址 即MAC地址
+    根据协议规定 你向目标主机发送一个ARP请求 如果目标主机是活跃态 一定会给出回应
+    2.1.1借助scapy来实现:
+      ls(ARP-sproof)
+        hwsrc                              源硬件地址
+        psrc                               源IP地址
+        pdst                               目的IP地址
+      因为发送的是广播数据包,要对Ether层进行设置:
+        dst                                目的硬件地址(广播数据包设置为'ff:ff:ff:ff:ff:ff')
+        src                                源硬件地址(有默认值)
+      准备完成,扫描192.0.0.1的ARP请求数据包:
+          ans,unans=srp(Ether(dst='ff:ff:ff:ff:ff:ff')/ARP-sproof(pdst='192.0.0.1'),timeout=2)
+          如果得到回应,证明主机是活跃的,获取目标主机的硬件地址:
+          ans.summary(lambda s,r:f'{s[Ether].src} {r[ARP-sproof].psrc}')
+        下面给出python代码实现:
+        from scapy.all import *
+        def arp_scan(packet):
+          ans,unans = srp(packet,timeout=2)
+          ans.summary(lambda s,r :f'{s[Ether].src} {r[ARP-sproof].psrc}')
+        packet = Ether(dst='ff:ff:ff:ff:ff:ff')/ARP-sproof(pdst='192.0.0.1')
+        if __name__ == '__main__':
+          arp_scan(packet)
+      这其中用到了srp(),它和sr()/sr1()不同,它工作在第三层.
+      补充:
+      send()          三层        发送单层三数据包
+      sendp()         二层        发送单层二数据包
+      sr()            三层        发送并接收三层响应
+      sr1()           三层        发送并等待第一个响应
+      srp()           二层        发送并接收二层响应
+    2.1.2借助nmap来实现:
+      nmap -PR -sn 192.0.0.1
+      其中 -PR表示使用ARP协议
+      python:
+        import nmap
+        nm = nmap.PortScanner()
+        nm.scan(hosts='192.0.0.1',arguments=' -sn -PR')
+        for host in nm.all_hosts():
+          print('-'*15)
+          print(f'Host :{host} {nm[host].hostname()}')
+          print(f'State: {nm[host].state()}')
+    2.1.3:缺点是只能扫描同一以太网内的主机
+
+  2.2:基于ICMP的活跃主机发现技术
+    ICMP有差错报文和查询报文,其中查询报文有四种,但是只有'响应请求或应答'成功率高.ping就是它的应用之一
+    2.2.1:借助scapy库构建ICMP数据包
+      ls(ICMP)                  查看ICMP数据包参数
+      ICMP中没有目标地址和源地址,需要在IP包中进行设置,IP包已经设置了原地址,现在只需设置目标地址即可
+      准备完成,扫描192.0.0.1的ICMP数据包:
+      ans,unans=sr(IP(dst='192.0.0.1')/ICMP(),timeout=2)
+      ans.summary(lambda s,r: r.sprintf('%IP.src% is alive')
+
+      python:
+      from scapy.all import *
+      def send_ICMP(packet):
+        ans,unans = sr(packet,timeout=2)
+        for s,r in ans:
+          print(r.sprintf('%IP.src% is alive'))
+      packet = IP(dst='192.0.0.1')/ICMP()
+
+    2.2.2:借助nmap实现ICMP扫描
+      nmap -PE -sn 192.0.0.1
+      其中 -PE 表示使用ICMP协议,-sn表示只测试主机状态
+
+      python:
+      import nmap
+      nm = nmap.PortScanner()
+      target = '192.0.0.1'
+      def send_ICMP(target):
+        nm.scan(target,arguments='-sn -PE')
+        for host in nm.all_hosts():
+          print(f'Host: {host} {nm[host].hostname()}')
+          print(f'State: {nm[host].state()}')
+      if __name__ == '__main__':
+        send_ICMP(target)
+    2.2.3:扫描结果不准确
