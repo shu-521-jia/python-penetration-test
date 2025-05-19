@@ -32,13 +32,13 @@
       准备完成,扫描192.0.0.1的ARP请求数据包:
           ans,unans=srp(Ether(dst='ff:ff:ff:ff:ff:ff')/ARP-sproof(pdst='192.0.0.1'),timeout=2)
           如果得到回应,证明主机是活跃的,获取目标主机的硬件地址:
-          ans.summary(lambda s,r:f'{s[Ether].src} {r[ARP-sproof].psrc}')
+          ans.summary(lambda s,r:f'{s[Ether].src} {r[ARP].psrc}')
         下面给出python代码实现:
         from scapy.all import *
         def arp_scan(packet):
           ans,unans = srp(packet,timeout=2)
-          ans.summary(lambda s,r :f'{s[Ether].src} {r[ARP-sproof].psrc}')
-        packet = Ether(dst='ff:ff:ff:ff:ff:ff')/ARP-sproof(pdst='192.0.0.1')
+          ans.summary(lambda s,r :f'{s[Ether].src} {r[ARP].psrc}')
+        packet = Ether(dst='ff:ff:ff:ff:ff:ff')/ARP(pdst='192.0.0.1')
         if __name__ == '__main__':
           arp_scan(packet)
       这其中用到了srp(),它和sr()/sr1()不同,它工作在第三层.
@@ -94,3 +94,69 @@
       if __name__ == '__main__':
         send_ICMP(target)
     2.2.3:扫描结果不准确
+2.3:基于TCP的活跃主机发现技术
+  首先介绍一下三次握手:
+    1:客户机发送SYN(SEQ=x)数据包发给服务器,进入SYN_SEND状态
+    2:服务器收到SYN数据包,回应一个SYN(SEQ=y)和ACK(ACK=x+1)数据包,进入SYN_RECV状态
+    3:客户机收到服务器的SYN数据包,回应一个ACK(ACK=y+1)数据包,进入Established状态
+    2.3.1:scapy库实现TCP活跃主机扫描
+      ls(TCP)          查看TCP数据包参数
+        sport          源端口
+        dport          目标端口
+        flags          标志位,通常有:
+                              SYN            建立连接
+                              FIN            关闭连接
+                              ACK            响应
+                              PSH            有data数据传输
+                              RST            连接重置
+      准备完成,下面实现:
+        ans,unans=sr(IP(dst='192.0.0.1')/TCP(dport=80,flags='S'))
+        ans.summary(lambda s,r :r.sprintf("%IP.src% is alive'))
+  
+      python:  
+      from scapy.all import *
+      target = '192.0.0.1'
+      t_port = 80
+      packet = IP(dst=target)/TCP(dport=t_port,flags='S')
+      def send_packet(packet):
+        sr(packet,tineout=2)
+        for s,r in ans:
+          print('Target is alive')
+          print(r.sprintf('%IP.src% is alive'))
+      if __name__ == '__main__':
+          send_packet(packet)
+    2.3.2:nmap实现TCP活跃主机扫描
+      nmap -sT -p 80 -p 192.0.0.1
+      python:
+        import nmap
+        def send_packet(t_host,t_port):
+          nm = nmap.PortScanner()
+          nm.scan(hosts=t_host,ports=t_port,arguments='-sT')
+          for host in nm.all_hosts():
+            print(f'Host : {host} {nm[host].hostname()}')
+            print(f'State: {nm[host].state()}')
+        host = '192.0.0.1'
+        t_port = 80
+        if __name__ == '__main__':
+            send_packet(host,t_port)
+
+2.4:基于UDP的活跃主机发现技术
+    UDP没有三次握手协议,当向目标发送一个UDP数据包之后 目标不会返回任何数据包
+	  如果目标主机处于活跃状态且端口是关闭的 那么会返回ICMP数据包 (unreachable)
+	  如果目标主机处于非活跃状态 接收不到任何回应
+    2.4.1:下面使用scapy实现
+      ans,unans=sr(IP(dst='192.0.0.1')/UDP(dport=6777))
+      ans.summary(lambda s,r :r.sprintf('%IP.src% is alive'))
+      python:
+        from scapy.all import *
+        def send_packet(packet):
+          ans,unans = sr(packet,timeout = 2)
+          ans.summary(lambda s,r: r.sprintf('%IP.src% is alive'))
+    
+        packet = IP(dst='192.0.0.1')/UDP(dport=6777)
+        if __name__ == '__main__':
+          send_packet(packet)
+
+
+
+
