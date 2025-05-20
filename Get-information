@@ -157,6 +157,106 @@
         if __name__ == '__main__':
           send_packet(packet)
 
+		2.4.2:下面使用nmap实现
+			nmap -PU -p 6777 192.0..1
+			python:
+			import nmap
+			target_port = '6777'
+			target_ip = '192.0.0.1'
+			def send_packet(target_ip,target_port):
+			    nm = nmap.PortScanner()
+			    nm.scan(hosts=target_ip,ports=target_port,arguments='-PU')
+			    for host in nm.all_hosts():
+			        print(f'Target {nm[host].hostname()} is alive')
+			        print(f'State: {nm[host].state()}')
+			if __name__ == '__main__':
+			    send_packet(target_ip,target_port)
+3:端口扫描
+	3.1:TCP全开扫描
+		向目标主机发送TCP数据包后,返回response有三种可能:
+		1			response为空 表明端口关闭							使用str(type(response))来判断
+		2     判断response是SYN+ACK还是RST					response.getlayer(TCP).flags==0x12
+					如果为真,需要发送ACK数据包,完成三次握手:
+						IP(dst=dst_ip)/TCP(sport=src_port,dport=dst_port,flags="AR")
+		3			如果第二种返回的是RST(0x14)						response.getlayer[TCP].flags==0x14
+		补充:由于scapy的数据包是分层的,可以使用haslayer(TCP)来判断是否含有TCP协议
+		3.1.1:使用python实现
+		python:
+		from scapy.all import *
+
+		dst_ip = '192.0.0.1'
+		s_port = RandShort()
+		d_port = 80
+		
+		def send_packet(packet):
+		    response = sr1(packet, timeout=5)
+		    if response is None:
+		        print("Port is filtered (no response)")
+		    elif response.haslayer(TCP):
+		        tcp_layer = response.getlayer(TCP)
+		        if tcp_layer.flags == 0x12:  # SYN-ACK
+		            print(f"Port {d_port} is open")
+		            # 构造RST包终止连接
+		            seq1 = response.ack
+		            ack1 = response.seq + 1
+		            packet_rst = IP(dst=dst_ip)/TCP(sport=s_port, dport=d_port, seq=seq1, ack=ack1, flags=0x10)
+		            send(packet_rst, verbose=0)
+		        elif tcp_layer.flags == 0x14:  # RST-ACK
+		            print(f"Port {d_port} is closed")
+		    elif response.haslayer(ICMP):
+		        print("Port is filtered (ICMP error)")
+		
+		if __name__ == '__main__':
+		    packet = IP(dst=dst_ip)/TCP(sport=s_port, dport=d_port, flags='S')  # 正确设置SYN标志
+		    send_packet(packet)
+		3.2:TCP半开扫描
+				在收到主机回复的SYN+ACK后,已经确定目标主机处于活跃状态.
+				因此不需要回复ACK,发送一个RST中断连接即可
+				现在需要考虑到的是:如果目标端口没有任何回应,或者收到ICMP错误消息,归于filtered状态
+				ICMP错误消息有:
+					type										code											意义
+					3													1											主机不可达
+					3													2											协议不可达
+					3													3											端口补课达
+					3													9											目标网络地址被强制禁止
+					3													10										目标主机被强制禁止
+					3													13										受限过滤机制,通信被强制禁止
+				3.2.1:python
+					from scapy.all import *
+					s_port = RandShort()
+					d_port = 80
+					dst_ip = '192.0.0.1'
+					
+					def send_packet(packet):
+					    response = sr1(packet, timeout=5, verbose=0)
+					    if response is None:
+					        print(f"Port {d_port}: Filtered (No Response)")  # 无响应表示过滤
+					    elif response.haslayer(TCP):
+					        tcp_layer = response.getlayer(TCP)
+					        if tcp_layer.flags == 0x12:  # SYN-ACK
+					            print(f"Port {d_port}: Open")
+					            # 发送RST终止连接（防止目标记录半开连接）
+					            rst_packet = IP(dst=dst_ip)/TCP(
+					                sport=s_port,
+					                dport=d_port,
+					                seq=response.ack,      # 序列号为SYN-ACK的ack值（即初始seq+1）
+					                ack=response.seq + 1,  # 确认号为SYN-ACK的seq+1
+					                flags='R'
+					            )
+					            send(rst_packet, verbose=0)
+					        elif tcp_layer.flags == 0x14:  # RST-ACK
+					            print(f"Port {d_port}: Closed")
+					    elif response.haslayer(ICMP):
+					        icmp_layer = response.getlayer(ICMP)
+					        if icmp_layer.type == 3 and icmp_layer.code in [1, 2, 3, 9, 10, 13]:
+					            print(f"Port {d_port}: Filtered (ICMP Error)")
+					
+					if __name__ == '__main__':
+					    packet = IP(dst=dst_ip)/TCP(sport=s_port, dport=d_port, flags='S')  # SYN包
+					    send_packet(packet)
+4:服务扫描
+
+5:操作系统扫描
 
 
 
